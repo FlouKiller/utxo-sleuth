@@ -203,6 +203,32 @@ def test_a_large_payout_is_reported_as_an_unknown_service():
     assert report.services[0].service == "unknown service (payout to 20 addresses)"
 
 
+def small_batch(sender, change=None):
+    outputs = [(f"o{n}", 1_100 + n) for n in range(5)] + [("a", 5_555)]
+    if change:
+        outputs.append((change, 77_777))
+    return tx("batch", [(sender, 99_999)], outputs)
+
+
+def test_a_small_batch_paying_the_sender_back_is_a_payout():
+    report = Tracer(FakeApi(small_batch("hot", change="hot"))).trace("a")
+    assert report.services[0].service == "unknown service (payout to 7 addresses)"
+
+
+def test_a_small_batch_from_a_busy_sender_is_a_payout():
+    history = [tx(f"h{n}", [("z", 10)], [("hot", 9)]) for n in range(50)]
+    report = Tracer(FakeApi(small_batch("hot"), *history)).trace("a")
+    assert report.services[0].service == "unknown service (payout to 6 addresses)"
+
+
+def test_a_small_batch_from_a_quiet_sender_is_not_a_payout():
+    assert Tracer(FakeApi(small_batch("friend"))).trace("a").services == []
+
+
+def test_two_outputs_from_a_sender_paying_itself_back_is_not_a_payout():
+    assert Tracer(FakeApi(tx("t", [("x", 9_000)], [("a", 5_555), ("x", 3_333)]))).trace("a").services == []
+
+
 def test_evaluation_against_a_known_wallet():
     report = Tracer(FakeApi(clear_payment("t", "a", "rest"))).trace("a")
     assert evaluate(report, {"a", "rest", "unused"}).recall == 0.5

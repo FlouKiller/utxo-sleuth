@@ -43,8 +43,10 @@ This downloads WalletExplorer's address lists for 17 exchanges into
 site states no redistribution terms. Lookups are then offline.
 
 The report lists each cluster address that received from or sent to a known
-service, and flags large payouts as an `unknown service`. Dealing with an exchange
-creates no ownership link: only spending together with a labelled address does.
+service. It flags a payout as an `unknown service` from 10 outputs, or from 5 when
+the sender pays itself back or has at least 50 transactions. Dealing with an
+exchange creates no ownership link: only spending together with a labelled
+address does.
 
 Coverage is partial. Most WalletExplorer names date from 2016 and its big hot
 wallets are often unnamed, so a missing label proves nothing. Coinbase has no

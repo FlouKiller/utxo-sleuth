@@ -40,6 +40,9 @@ SWEEP_CONFIDENCE = 0.5
 MAX_REUSE_LOOKUP = 50
 # Paying this many addresses at once is what an exchange withdrawal looks like.
 BATCH_OUTPUTS = 10
+# Smaller batches also count when the sender behaves like a hot wallet.
+HOT_WALLET_OUTPUTS = 5
+HOT_WALLET_TXS = 50
 
 
 class ChainApi(Protocol):
@@ -171,12 +174,21 @@ class Tracer:
             contacts = [
                 ServiceContact(address, sender, RECEIVED_FROM, tx.txid) for sender in senders
             ]
-            if not contacts and len(outputs) >= BATCH_OUTPUTS:
+            if not contacts and self._is_payout(inputs, outputs):
                 name = f"unknown service (payout to {len(outputs)} addresses)"
                 contacts = [ServiceContact(address, name, RECEIVED_FROM, tx.txid)]
         for contact in contacts:
             if contact not in report.services:
                 report.services.append(contact)
+
+    def _is_payout(self, inputs: list[str], outputs: list[str]) -> bool:
+        if len(outputs) >= BATCH_OUTPUTS:
+            return True
+        if len(outputs) < HOT_WALLET_OUTPUTS or not inputs:
+            return False
+        if set(inputs) & set(outputs):
+            return True
+        return self.api.address_stats(inputs[0]).tx_count >= HOT_WALLET_TXS
 
     def _admit(self, link, source, report, queue) -> None:
         confidence = source.confidence * link.confidence
