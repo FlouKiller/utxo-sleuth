@@ -15,11 +15,12 @@ from typing import Any, Callable
 
 import httpx
 
-from utxo_sleuth.models import AddressStats, Tx
+from utxo_sleuth.models import AddressStats, BlockRef, Tx
 
 DEFAULT_API = "https://mempool.space/api"
 DEFAULT_CACHE = Path.home() / ".cache" / "utxo-sleuth" / "esplora.sqlite"
 VOLATILE_TTL = 3600.0
+TIP_TTL = 60.0
 MAX_ATTEMPTS = 5
 
 
@@ -62,6 +63,10 @@ class ResponseCache:
 
 def _volatile(_: Any) -> float:
     return VOLATILE_TTL
+
+
+def _tip(_: Any) -> float:
+    return TIP_TTL
 
 
 def _tx_ttl(data: dict[str, Any]) -> float | None:
@@ -112,6 +117,21 @@ class Esplora:
             count += len(pages[-1])
         return [Tx.from_esplora(tx) for page in pages for tx in page]
 
+    def tip_height(self) -> int:
+        return self._get("/blocks/tip/height", _tip)
+
+    def blocks(self, height: int) -> list[BlockRef]:
+        """The block at this height and the few before it, newest first."""
+        return [
+            BlockRef(block["id"], block["height"], block["timestamp"])
+            for block in self._get(f"/blocks/{height}", _tip)
+        ]
+
+    def raw_block(self, block_hash: str) -> bytes:
+        """Too large for the cache, so every call is a request."""
+        self._spend_request()
+        return self._fetch(f"{self.base_url}/block/{block_hash}/raw").content
+
     def close(self) -> None:
         self._http.close()
         self._cache.close()
@@ -121,13 +141,16 @@ class Esplora:
         cached = self._cache.get(key)
         if cached is not None:
             return cached
-        if self.requests >= self.max_requests:
-            raise BudgetExceeded(f"request budget of {self.max_requests} used up")
-        body = self._fetch(key)
+        self._spend_request()
+        body = self._fetch(key).json()
         self._cache.put(key, body, ttl_for(body))
         return body
 
-    def _fetch(self, url: str) -> Any:
+    def _spend_request(self) -> None:
+        if self.requests >= self.max_requests:
+            raise BudgetExceeded(f"request budget of {self.max_requests} used up")
+
+    def _fetch(self, url: str) -> httpx.Response:
         problem = "no attempt made"
         for attempt in range(MAX_ATTEMPTS):
             wait = self._last_request + self.min_interval - time.monotonic()
@@ -148,5 +171,5 @@ class Esplora:
                 continue
             if response.status_code != 200:
                 raise ApiError(f"{url}: HTTP {response.status_code}: {response.text[:200]}")
-            return response.json()
+            return response
         raise ApiError(f"{url}: gave up after {MAX_ATTEMPTS} attempts ({problem})")

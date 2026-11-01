@@ -50,6 +50,23 @@ at newly mined coins, at unspent coins or back on the target. `--flow-depth` set
 the number of steps (default 6) and `--flow-branches` how many of the largest
 branches to follow at each step (default 3). A trail says nothing about ownership.
 
+## Finding a transaction
+
+Search every output of an amount in a time window, in local time:
+
+```bash
+utxo-sleuth --find-amount 517412 --from "2026-01-15 20:00" --to "2026-01-15 22:00"
+```
+
+`--to` defaults to one hour later, `--tolerance` accepts a difference in sats, and
+`--max-blocks` caps the search (default 72, about half a day). Each block costs
+one request.
+
+The search only sees confirmed transactions, by the time of their block. That
+time is set by the miner and comes after the transaction was sent, sometimes by
+hours, so let the window run past that moment. The amount must be what the
+receiver got: the sender's total also includes the fee and any change.
+
 ## Exchanges and services
 
 ```bash

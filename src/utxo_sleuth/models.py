@@ -118,6 +118,13 @@ class Tx:
 
 
 @dataclass(frozen=True)
+class BlockRef:
+    hash: str
+    height: int
+    time: int
+
+
+@dataclass(frozen=True)
 class AddressStats:
     tx_count: int
     funded_count: int

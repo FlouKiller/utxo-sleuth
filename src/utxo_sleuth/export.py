@@ -8,6 +8,7 @@ from typing import Any
 
 from utxo_sleuth.cluster import Report
 from utxo_sleuth.flow import FlowNode, FlowReport, main_path, paths
+from utxo_sleuth.search import Match
 
 
 @dataclass(frozen=True)
@@ -178,6 +179,19 @@ def _amount(node: FlowNode) -> str:
 
 def _hidden(node: FlowNode) -> int:
     return node.hidden + sum(_hidden(child) for child in node.children)
+
+
+def to_search_text(matches: list[Match], blocks: int) -> str:
+    lines = [f"Blocks searched: {blocks}", f"Matching outputs: {len(matches)}"]
+    for match in matches:
+        moment = datetime.fromtimestamp(match.block.time).strftime("%Y-%m-%d %H:%M")
+        lines += [
+            "",
+            f"{match.value:,} sats, block {match.block.height} at {moment} (local time)",
+            f"  to: {match.address or 'non-standard script'}",
+            f"  tx: {match.txid}",
+        ]
+    return "\n".join(lines) + "\n"
 
 
 def _strongest_links(report: Report) -> dict:

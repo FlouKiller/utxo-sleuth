@@ -6,20 +6,23 @@ import argparse
 import json
 import re
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from utxo_sleuth.cluster import Limits, Tracer
-from utxo_sleuth.esplora import DEFAULT_API, DEFAULT_CACHE, ApiError, Esplora
+from utxo_sleuth.esplora import DEFAULT_API, DEFAULT_CACHE, ApiError, BudgetExceeded, Esplora
 from utxo_sleuth.export import (
     breakdown,
     evaluate,
     to_dot,
     to_flow_text,
     to_json,
+    to_search_text,
     to_summary,
     to_text,
 )
 from utxo_sleuth.flow import FlowLimits, FlowTracer
+from utxo_sleuth.search import DEFAULT_MAX_BLOCKS, WindowTooLarge, find_amount
 from utxo_sleuth.labels import DEFAULT_LABELS, Labels, update_labels
 from utxo_sleuth.wallet import (
     DEFAULT_COUNT,
@@ -31,6 +34,15 @@ from utxo_sleuth.wallet import (
 )
 
 ADDRESS = re.compile(r"^(bc1[a-z0-9]{8,87}|[13][a-km-zA-HJ-NP-Z1-9]{25,39})$")
+DEFAULT_WINDOW = 3600
+
+
+def moment(text: str) -> int:
+    """A date and time, read as local time unless it states its offset."""
+    try:
+        return int(datetime.fromisoformat(text).astimezone().timestamp())
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected YYYY-MM-DD HH:MM, got {text!r}") from None
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -46,6 +58,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--api", default=DEFAULT_API, help="Esplora base URL (default: %(default)s)")
     parser.add_argument("--cache", type=Path, default=DEFAULT_CACHE, help="SQLite cache path")
+    parser.add_argument("--find-amount", type=int, help="search for an output of this many sats")
+    parser.add_argument(
+        "--from",
+        dest="start",
+        type=moment,
+        help='start of the search, local time: "YYYY-MM-DD HH:MM"',
+    )
+    parser.add_argument(
+        "--to", dest="end", type=moment, help="end of the search (default: one hour later)"
+    )
+    parser.add_argument("--tolerance", type=int, default=0, help="allowed difference in sats")
+    parser.add_argument(
+        "--max-blocks",
+        type=int,
+        default=DEFAULT_MAX_BLOCKS,
+        help="largest number of blocks to search (default: %(default)s)",
+    )
     flow = FlowLimits()
     parser.add_argument(
         "--flow",
@@ -89,6 +118,29 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def search(args: argparse.Namespace) -> int:
+    end = args.end or args.start + DEFAULT_WINDOW
+    if end <= args.start:
+        print("--to must come after --from.", file=sys.stderr)
+        return 2
+    api = Esplora(args.api, args.cache, args.max_requests)
+    try:
+        matches, blocks = find_amount(
+            api, args.find_amount, args.start, end, args.tolerance, args.max_blocks
+        )
+    except WindowTooLarge as exc:
+        print(f"{exc}: narrow the window or raise --max-blocks.", file=sys.stderr)
+        return 2
+    except (ApiError, BudgetExceeded) as exc:
+        print(f"API error: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        api.close()
+    print(to_search_text(matches, blocks), end="")
+    print(f"\nNetwork requests: {api.requests}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -96,6 +148,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Labels stored: {update_labels(args.labels_db)}")
         if args.address is None and args.xpub_file is None:
             return 0
+    if args.find_amount is not None:
+        if args.start is None:
+            parser.error("--find-amount needs --from")
+        return search(args)
     if args.address is None and args.xpub_file is None:
         parser.error("give an address, or --xpub-file to start from your wallet")
     if args.flow and (args.summary or args.dot or args.truth or args.xpub_file):
