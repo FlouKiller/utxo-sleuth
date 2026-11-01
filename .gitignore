@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+*.egg-info/
+build/
+dist/
+
+# Anything that could tie real addresses to this repository's owner.
+reports/
+truth/
+*.truth.txt
+*.xpub
+*.xpub.txt
+*.local.json
+*.report.json
+*.dot
