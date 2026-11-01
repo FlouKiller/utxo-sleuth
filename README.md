@@ -32,6 +32,24 @@ point `--api` at your own electrs instance. Responses are cached in
 | `--tags` | JSON file `{"address": "service name"}`: never expand these |
 | `--truth` | Text file of known addresses: prints precision and recall |
 
+## Following the funds
+
+```bash
+utxo-sleuth <address> --flow
+```
+
+Clustering asks who owns an address. `--flow` asks where its money came from and
+went, by following each transaction output upstream and downstream:
+
+```text
+Binance.com -> bc1qaaaa...aaaaaa -> TARGET -> bc1qbbbb...bbbbbb [2-of-2 multisig] (back to target)
+```
+
+A trail ends at a known service, at something behaving like one, at a CoinJoin,
+at newly mined coins, at unspent coins or back on the target. `--flow-depth` sets
+the number of steps (default 6) and `--flow-branches` how many of the largest
+branches to follow at each step (default 3). A trail says nothing about ownership.
+
 ## Exchanges and services
 
 ```bash

@@ -174,21 +174,12 @@ class Tracer:
             contacts = [
                 ServiceContact(address, sender, RECEIVED_FROM, tx.txid) for sender in senders
             ]
-            if not contacts and self._is_payout(inputs, outputs):
+            if not contacts and is_payout(self.api, inputs, outputs):
                 name = f"unknown service (payout to {len(outputs)} addresses)"
                 contacts = [ServiceContact(address, name, RECEIVED_FROM, tx.txid)]
         for contact in contacts:
             if contact not in report.services:
                 report.services.append(contact)
-
-    def _is_payout(self, inputs: list[str], outputs: list[str]) -> bool:
-        if len(outputs) >= BATCH_OUTPUTS:
-            return True
-        if len(outputs) < HOT_WALLET_OUTPUTS or not inputs:
-            return False
-        if set(inputs) & set(outputs):
-            return True
-        return self.api.address_stats(inputs[0]).tx_count >= HOT_WALLET_TXS
 
     def _admit(self, link, source, report, queue) -> None:
         confidence = source.confidence * link.confidence
@@ -309,6 +300,17 @@ class Tracer:
             and address in [o.address for o in other.outputs]
             for other in self.api.address_txs(address, stats.tx_count)
         )
+
+
+def is_payout(api: ChainApi, inputs: list[str], outputs: list[str]) -> bool:
+    """Does this transaction look like a service paying out many customers?"""
+    if len(outputs) >= BATCH_OUTPUTS:
+        return True
+    if len(outputs) < HOT_WALLET_OUTPUTS or not inputs:
+        return False
+    if set(inputs) & set(outputs):
+        return True
+    return api.address_stats(inputs[0]).tx_count >= HOT_WALLET_TXS
 
 
 def _multisig_policy_of(address: str, txs: list[Tx]) -> str | None:

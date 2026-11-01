@@ -14,10 +14,12 @@ from utxo_sleuth.export import (
     breakdown,
     evaluate,
     to_dot,
+    to_flow_text,
     to_json,
     to_summary,
     to_text,
 )
+from utxo_sleuth.flow import FlowLimits, FlowTracer
 from utxo_sleuth.labels import DEFAULT_LABELS, Labels, update_labels
 from utxo_sleuth.wallet import (
     DEFAULT_COUNT,
@@ -44,6 +46,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--api", default=DEFAULT_API, help="Esplora base URL (default: %(default)s)")
     parser.add_argument("--cache", type=Path, default=DEFAULT_CACHE, help="SQLite cache path")
+    flow = FlowLimits()
+    parser.add_argument(
+        "--flow",
+        action="store_true",
+        help="follow the funds upstream and downstream instead of clustering",
+    )
+    parser.add_argument("--flow-depth", type=int, default=flow.max_depth, help="steps per direction")
+    parser.add_argument("--flow-branches", type=int, default=flow.max_branches, help="largest branches followed per step")
     parser.add_argument("--max-hops", type=int, default=defaults.max_hops)
     parser.add_argument("--min-confidence", type=float, default=defaults.min_confidence)
     parser.add_argument("--change-threshold", type=float, default=defaults.change_threshold)
@@ -88,6 +98,10 @@ def main(argv: list[str] | None = None) -> int:
             return 0
     if args.address is None and args.xpub_file is None:
         parser.error("give an address, or --xpub-file to start from your wallet")
+    if args.flow and (args.summary or args.dot or args.truth or args.xpub_file):
+        parser.error("--flow works with an address, and cannot be combined with those options")
+    if args.flow and args.address is None:
+        parser.error("--flow needs an address")
     if args.address and not ADDRESS.match(args.address):
         print(f"Not a Bitcoin mainnet address: {args.address}", file=sys.stderr)
         return 2
@@ -126,7 +140,11 @@ def main(argv: list[str] | None = None) -> int:
         if seed is None:
             print(f"No used address in the first {SEED_SEARCH} of this wallet.", file=sys.stderr)
             return 2
-        report = Tracer(api, limits, labels).trace(seed)
+        if args.flow:
+            flow_limits = FlowLimits(max_depth=args.flow_depth, max_branches=args.flow_branches)
+            report = FlowTracer(api, flow_limits, labels).trace(seed)
+        else:
+            report = Tracer(api, limits, labels).trace(seed)
     except ApiError as exc:
         print(f"API error: {exc}", file=sys.stderr)
         return 1
@@ -134,7 +152,10 @@ def main(argv: list[str] | None = None) -> int:
         api.close()
         labels.close()
 
-    print((to_summary if args.summary else to_text)(report), end="")
+    if args.flow:
+        print(to_flow_text(report), end="")
+    else:
+        print((to_summary if args.summary else to_text)(report), end="")
     print(f"\nNetwork requests: {api.requests}")
     if wallet:
         # A derived list includes unused addresses, so recall means nothing here.

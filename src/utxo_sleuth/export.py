@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 from utxo_sleuth.cluster import Report
+from utxo_sleuth.flow import FlowNode, FlowReport, main_path, paths
 
 
 @dataclass(frozen=True)
@@ -62,7 +64,7 @@ def to_summary(report: Report) -> str:
     return "\n".join(lines) + "\n"
 
 
-def to_json(report: Report) -> dict[str, Any]:
+def to_json(report: Report | FlowReport) -> dict[str, Any]:
     return asdict(report)
 
 
@@ -123,6 +125,59 @@ def to_text(report: Report) -> str:
     if report.truncated:
         lines += ["", f"INCOMPLETE: {report.truncated}"]
     return "\n".join(lines) + "\n"
+
+
+def to_flow_text(report: FlowReport) -> str:
+    target = f"TARGET {_short(report.target)}"
+    upstream = main_path(report.origins)
+    downstream = main_path(report.destinations)
+    main = [_step(n) for n in reversed(upstream)] + [target] + [_step(n) for n in downstream]
+    lines = [
+        f"Target: {report.target}",
+        "",
+        "Main flow, following the largest amounts:",
+        f"  {' -> '.join(main)}",
+    ]
+    if report.origins:
+        lines += ["", "Where the funds came from:"]
+        for root in report.origins:
+            lines.append(f"  sender spent {_amount(root)}")
+            for chain in paths(root):
+                steps = [_step(node) for node in reversed(chain)] + ["TARGET"]
+                lines.append(f"    {' -> '.join(steps)}")
+    if report.destinations:
+        lines += ["", "Where the funds went:"]
+        for root in report.destinations:
+            lines.append(f"  target sent {_amount(root)}")
+            for chain in paths(root):
+                steps = ["TARGET"] + [_step(node) for node in chain]
+                lines.append(f"    {' -> '.join(steps)}")
+    hidden = sum(_hidden(root) for root in report.origins + report.destinations)
+    if hidden:
+        lines += ["", f"Smaller branches not followed: {hidden}"]
+    if report.truncated:
+        lines += ["", f"INCOMPLETE: {report.truncated}"]
+    return "\n".join(lines) + "\n"
+
+
+def _step(node: FlowNode) -> str:
+    text = node.service or (_short(node.address) if node.address else "unknown script")
+    if node.multisig:
+        text += f" [{node.multisig} multisig]"
+    if node.end:
+        text += f" ({node.end})"
+    return text
+
+
+def _amount(node: FlowNode) -> str:
+    day = "unconfirmed"
+    if node.time is not None:
+        day = datetime.fromtimestamp(node.time, timezone.utc).date().isoformat()
+    return f"{node.value:,} sats on {day} in {node.txid[:12]}"
+
+
+def _hidden(node: FlowNode) -> int:
+    return node.hidden + sum(_hidden(child) for child in node.children)
 
 
 def _strongest_links(report: Report) -> dict:

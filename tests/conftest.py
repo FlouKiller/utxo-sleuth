@@ -26,8 +26,8 @@ def tx(
         fee=fee,
         height=height,
         inputs=tuple(
-            Input(address, value, input_type, 0xFFFFFFFF, multisig)
-            for address, value in inputs
+            Input(spec[0], spec[1], input_type, 0xFFFFFFFF, multisig, *spec[2:])
+            for spec in inputs
         ),
         outputs=tuple(
             Output(vout, spec[0], spec[1], spec[2] if len(spec) > 2 else P2WPKH)
@@ -51,8 +51,14 @@ class FakeApi:
 
     def outspends(self, txid):
         self.calls += 1
+        spent_by = {
+            (i.prev_txid, i.prev_vout): t.txid
+            for t in self.txs.values()
+            for i in t.inputs
+        }
         return [
-            self.spenders.get((txid, o.vout)) for o in self.txs[txid].outputs
+            self.spenders.get((txid, o.vout), spent_by.get((txid, o.vout)))
+            for o in self.txs[txid].outputs
         ]
 
     def address_stats(self, address):

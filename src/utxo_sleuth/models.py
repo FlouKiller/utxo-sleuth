@@ -28,6 +28,8 @@ class Input:
     script_type: str | None
     sequence: int
     multisig: str | None = None
+    prev_txid: str | None = None
+    prev_vout: int | None = None
 
 
 @dataclass(frozen=True)
@@ -57,6 +59,7 @@ class Tx:
     outputs: tuple[Output, ...]
     coinbase: bool = False
     height: int | None = None
+    time: int | None = None
 
     @property
     def input_addresses(self) -> list[str]:
@@ -88,6 +91,8 @@ class Tx:
                     script_type=prevout.get("scriptpubkey_type"),
                     sequence=vin.get("sequence", 0xFFFFFFFF),
                     multisig=_multisig_policy(vin),
+                    prev_txid=vin.get("txid"),
+                    prev_vout=vin.get("vout"),
                 )
             )
         outputs = tuple(
@@ -108,6 +113,7 @@ class Tx:
             outputs=outputs,
             coinbase=coinbase,
             height=data.get("status", {}).get("block_height"),
+            time=data.get("status", {}).get("block_time"),
         )
 
 
