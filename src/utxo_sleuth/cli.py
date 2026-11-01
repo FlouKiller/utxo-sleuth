@@ -22,7 +22,14 @@ from utxo_sleuth.export import (
     to_text,
 )
 from utxo_sleuth.flow import FlowLimits, FlowTracer
-from utxo_sleuth.search import DEFAULT_MAX_BLOCKS, WindowTooLarge, find_amount
+from utxo_sleuth.search import (
+    DEFAULT_MAX_BLOCKS,
+    DEFAULT_MAX_RESULTS,
+    DEFAULT_USD_MARGIN,
+    Target,
+    WindowTooLarge,
+    find_outputs,
+)
 from utxo_sleuth.labels import DEFAULT_LABELS, Labels, update_labels
 from utxo_sleuth.wallet import (
     DEFAULT_COUNT,
@@ -58,7 +65,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--api", default=DEFAULT_API, help="Esplora base URL (default: %(default)s)")
     parser.add_argument("--cache", type=Path, default=DEFAULT_CACHE, help="SQLite cache path")
-    parser.add_argument("--find-amount", type=int, help="search for an output of this many sats")
+    amount = parser.add_mutually_exclusive_group()
+    amount.add_argument("--find-amount", type=int, help="search for an output of this many sats")
+    amount.add_argument(
+        "--find-usd",
+        type=float,
+        help="search for an output worth this many dollars at the price of each block",
+    )
+    parser.add_argument(
+        "--margin",
+        type=float,
+        help=f"allowed difference in percent (default: 0 in sats, {DEFAULT_USD_MARGIN} in USD)",
+    )
+    parser.add_argument("--max-results", type=int, default=DEFAULT_MAX_RESULTS)
     parser.add_argument(
         "--from",
         dest="start",
@@ -123,11 +142,16 @@ def search(args: argparse.Namespace) -> int:
     if end <= args.start:
         print("--to must come after --from.", file=sys.stderr)
         return 2
+    default_margin = 0.0 if args.find_usd is None else DEFAULT_USD_MARGIN
+    target = Target(
+        sats=args.find_amount,
+        usd=args.find_usd,
+        margin_pct=default_margin if args.margin is None else args.margin,
+        tolerance=args.tolerance,
+    )
     api = Esplora(args.api, args.cache, args.max_requests)
     try:
-        matches, blocks = find_amount(
-            api, args.find_amount, args.start, end, args.tolerance, args.max_blocks
-        )
+        matches, blocks = find_outputs(api, target, args.start, end, args.max_blocks)
     except WindowTooLarge as exc:
         print(f"{exc}: narrow the window or raise --max-blocks.", file=sys.stderr)
         return 2
@@ -136,7 +160,7 @@ def search(args: argparse.Namespace) -> int:
         return 1
     finally:
         api.close()
-    print(to_search_text(matches, blocks), end="")
+    print(to_search_text(matches, blocks, args.max_results), end="")
     print(f"\nNetwork requests: {api.requests}")
     return 0
 
@@ -148,9 +172,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Labels stored: {update_labels(args.labels_db)}")
         if args.address is None and args.xpub_file is None:
             return 0
-    if args.find_amount is not None:
+    if args.find_amount is not None or args.find_usd is not None:
         if args.start is None:
-            parser.error("--find-amount needs --from")
+            parser.error("--find-amount and --find-usd need --from")
         return search(args)
     if args.address is None and args.xpub_file is None:
         parser.error("give an address, or --xpub-file to start from your wallet")

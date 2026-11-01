@@ -6,9 +6,10 @@ from utxo_sleuth import cli
 from utxo_sleuth.export import to_search_text
 from utxo_sleuth.models import BlockRef
 from utxo_sleuth.search import (
+    Target,
     WindowTooLarge,
     blocks_in_window,
-    find_amount,
+    find_outputs,
     scan_block,
 )
 
@@ -17,6 +18,10 @@ OP_RETURN = bytes.fromhex("6a0401020304")
 INPUT = bytes(36) + b"\x00" + b"\xff\xff\xff\xff"
 VERSION = (2).to_bytes(4, "little")
 LOCKTIME = bytes(4)
+
+
+def find_amount(api, amount, start, end, tolerance=0):
+    return find_outputs(api, Target(sats=amount, tolerance=tolerance), start, end)
 
 
 def serialize_outputs(outputs):
@@ -46,10 +51,14 @@ def block_of(*txs):
 
 
 class FakeBlocks:
-    def __init__(self, times, raw=None):
+    def __init__(self, times, raw=None, price=50_000):
         self.chain = [BlockRef(f"h{n}", n, time) for n, time in enumerate(times)]
         self.raw = raw or {}
+        self.price = price
         self.downloads = []
+
+    def btc_price(self, timestamp):
+        return self.price(timestamp) if callable(self.price) else self.price
 
     def tip_height(self):
         return self.chain[-1].height
@@ -134,11 +143,58 @@ def test_tolerance_widens_the_match():
     assert [m.value for m in find_amount(api, 517_412, 450, 550, tolerance=20)[0]] == [517_400]
 
 
+def test_dollars_become_sats_at_the_price_of_each_block():
+    # $100 is 200,000 sats at 50,000 and 100,000 sats at 100,000.
+    early = block_of(legacy_tx((200_000, P2WPKH), (100_000, P2WPKH)))
+    late = block_of(legacy_tx((200_000, P2WPKH), (100_000, P2WPKH)))
+    api = FakeBlocks(
+        [100 * n for n in range(30)],
+        {"h5": early, "h6": late},
+        price=lambda time: 50_000 if time < 550 else 100_000,
+    )
+    matches, _ = find_outputs(api, Target(usd=100, margin_pct=2), 450, 650)
+    assert [(m.block.height, m.value) for m in matches] == [(5, 200_000), (6, 100_000)]
+    assert matches[0].usd == pytest.approx(100)
+
+
+def test_the_margin_is_a_percentage_both_ways():
+    assert Target(usd=100, margin_pct=2).band(50_000) == (196_000, 204_000)
+    assert Target(sats=1_000, margin_pct=10).band(None) == (900, 1_100)
+
+
+def test_a_margin_never_reaches_empty_outputs():
+    assert Target(sats=5, tolerance=100).band(None)[0] == 1
+
+
+def test_results_come_closest_first():
+    raw = block_of(legacy_tx((205_000, P2WPKH), (200_500, P2WPKH), (197_000, P2WPKH)))
+    api = FakeBlocks([100 * n for n in range(30)], {"h5": raw})
+    matches, _ = find_outputs(api, Target(usd=100, margin_pct=3), 450, 550)
+    assert [m.value for m in matches] == [200_500, 197_000, 205_000]
+    assert matches[0].gap_pct == pytest.approx(0.25)
+
+
+def test_results_show_their_dollar_value():
+    raw = block_of(legacy_tx((200_000, P2WPKH)))
+    api = FakeBlocks([100 * n for n in range(30)], {"h5": raw})
+    text = to_search_text(*find_outputs(api, Target(usd=100, margin_pct=1), 450, 550))
+    assert "$100.00 at $50,000/BTC" in text
+
+
+def test_long_results_are_cut_to_the_closest():
+    raw = block_of(legacy_tx((1_000, P2WPKH), (1_001, P2WPKH), (1_002, P2WPKH)))
+    api = FakeBlocks([100 * n for n in range(30)], {"h5": raw})
+    matches, blocks = find_outputs(api, Target(sats=1_000, margin_pct=1), 450, 550)
+    text = to_search_text(matches, blocks, limit=1)
+    assert "Showing the 1 closest" in text
+    assert "1,002 sats" not in text
+
+
 def test_results_are_readable():
     raw = block_of(legacy_tx((517_412, P2WPKH)))
     api = FakeBlocks([100 * n for n in range(30)], {"h5": raw})
     text = to_search_text(*find_amount(api, 517_412, 450, 550))
-    assert "517,412 sats, block 5" in text
+    assert "517,412 sats, 0.00% off, block 5" in text
     assert "Matching outputs: 1" in text
 
 
@@ -146,6 +202,11 @@ def test_an_amount_needs_a_start(capsys):
     with pytest.raises(SystemExit):
         cli.main(["--find-amount", "517412"])
     assert "--from" in capsys.readouterr().err
+
+
+def test_sats_and_dollars_exclude_each_other():
+    with pytest.raises(SystemExit):
+        cli.main(["--find-amount", "1", "--find-usd", "1", "--from", "2026-01-15 20:00"])
 
 
 def test_a_bad_date_is_refused(capsys):

@@ -15,3 +15,6 @@ truth/
 *.local.json
 *.report.json
 *.dot
+
+# Local tooling.
+.claude/

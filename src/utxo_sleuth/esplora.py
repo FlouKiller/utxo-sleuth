@@ -18,6 +18,8 @@ import httpx
 from utxo_sleuth.models import AddressStats, BlockRef, Tx
 
 DEFAULT_API = "https://mempool.space/api"
+# Only mempool.space offers historic prices, so a self-hosted --api still uses it.
+PRICE_API = "https://mempool.space/api"
 DEFAULT_CACHE = Path.home() / ".cache" / "utxo-sleuth" / "esplora.sqlite"
 VOLATILE_TTL = 3600.0
 TIP_TTL = 60.0
@@ -84,6 +86,7 @@ class Esplora:
         self.base_url = base_url.rstrip("/")
         self.max_requests = max_requests
         self.min_interval = min_interval
+        self.on_request: Callable[[], None] | None = None
         self.requests = 0
         self._last_request = 0.0
         self._cache = ResponseCache(cache_path)
@@ -132,12 +135,28 @@ class Esplora:
         self._spend_request()
         return self._fetch(f"{self.base_url}/block/{block_hash}/raw").content
 
+    def btc_price(self, timestamp: int) -> float:
+        """The USD price of the hour holding this moment."""
+        hour = timestamp - timestamp % 3600
+        settled = hour < time.time() - 2 * 3600
+        body = self._get_url(
+            f"{PRICE_API}/v1/historical-price?currency=USD&timestamp={hour}",
+            lambda _: None if settled else TIP_TTL,
+        )
+        prices = body.get("prices") or [{}]
+        price = prices[0].get("USD")
+        if not price:
+            raise ApiError(f"no BTC price known for timestamp {timestamp}")
+        return price
+
     def close(self) -> None:
         self._http.close()
         self._cache.close()
 
     def _get(self, path: str, ttl_for: Callable[[Any], float | None]) -> Any:
-        key = self.base_url + path
+        return self._get_url(self.base_url + path, ttl_for)
+
+    def _get_url(self, key: str, ttl_for: Callable[[Any], float | None]) -> Any:
         cached = self._cache.get(key)
         if cached is not None:
             return cached
@@ -147,6 +166,8 @@ class Esplora:
         return body
 
     def _spend_request(self) -> None:
+        if self.on_request is not None:
+            self.on_request()
         if self.requests >= self.max_requests:
             raise BudgetExceeded(f"request budget of {self.max_requests} used up")
 

@@ -11,6 +11,13 @@ python -m venv .venv
 .venv/Scripts/python -m pip install -e .[dev]
 ```
 
+## Interface
+
+Double-click `Interface.bat`, or run `utxo-sleuth-ui`. A page opens in your
+browser with every feature and option, including a clickable diagram of the funds.
+It is served on `127.0.0.1` only and loads nothing from the internet. Closing the
+console window stops it.
+
 ## Usage
 
 ```bash
@@ -58,9 +65,19 @@ Search every output of an amount in a time window, in local time:
 utxo-sleuth --find-amount 517412 --from "2026-01-15 20:00" --to "2026-01-15 22:00"
 ```
 
-`--to` defaults to one hour later, `--tolerance` accepts a difference in sats, and
+Or search a dollar amount, converted with the BTC price of each block's hour:
+
+```bash
+utxo-sleuth --find-usd 200 --margin 2 --from "2026-01-15 20:00" --to "2026-01-15 22:00"
+```
+
+`--margin` is a percentage either way, 2 by default in dollars and 0 in sats.
+Results come closest first and `--max-results` caps them (default 50). `--to`
+defaults to one hour later, `--tolerance` adds a difference in sats, and
 `--max-blocks` caps the search (default 72, about half a day). Each block costs
-one request.
+one request, and historic prices always come from mempool.space.
+
+Explorers often show a transaction's value at today's price, not at its own.
 
 The search only sees confirmed transactions, by the time of their block. That
 time is set by the miner and comes after the transaction was sent, sometimes by

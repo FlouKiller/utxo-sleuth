@@ -6,12 +6,16 @@ walking its transactions through the API would take about 150.
 Only confirmed transactions are searched, by the time of their block. That time
 is set by the miner, and a transaction can wait a long time before being mined,
 so the window should run past the moment it was sent.
+
+A dollar amount is converted again for every block, with the price of that
+block's hour, because the same dollars are worth different sats across a window.
 """
 
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Iterator
+import math
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -22,17 +26,43 @@ from utxo_sleuth.models import BlockRef
 # Block timestamps are not strictly ordered, so look a little past each edge.
 EDGE_BLOCKS = 6
 DEFAULT_MAX_BLOCKS = 72
+# Covers hourly price moves and the gap between price sources.
+DEFAULT_USD_MARGIN = 2.0
+DEFAULT_MAX_RESULTS = 50
 HEADER_SIZE = 80
+SATS_PER_BTC = 100_000_000
 
 
 class BlockApi(Protocol):
     def tip_height(self) -> int: ...
     def blocks(self, height: int) -> list[BlockRef]: ...
     def raw_block(self, block_hash: str) -> bytes: ...
+    def btc_price(self, timestamp: int) -> float: ...
 
 
 class WindowTooLarge(ValueError):
     pass
+
+
+@dataclass(frozen=True)
+class Target:
+    """An amount in sats or in dollars, with its allowed margin."""
+
+    sats: int | None = None
+    usd: float | None = None
+    margin_pct: float = 0.0
+    tolerance: int = 0
+
+    def centre(self, price: float | None) -> float:
+        if self.sats is not None:
+            return self.sats
+        return self.usd / price * SATS_PER_BTC
+
+    def band(self, price: float | None) -> tuple[int, int]:
+        centre = self.centre(price)
+        margin = centre * self.margin_pct / 100
+        low = math.floor(centre - margin) - self.tolerance
+        return max(1, low), math.ceil(centre + margin) + self.tolerance
 
 
 @dataclass(frozen=True)
@@ -42,6 +72,9 @@ class Match:
     value: int
     address: str | None
     block: BlockRef
+    gap_pct: float = 0.0
+    usd: float | None = None
+    price: float | None = None
 
 
 class _Reader:
@@ -152,19 +185,26 @@ def blocks_in_window(
     return found
 
 
-def find_amount(
+def find_outputs(
     api: BlockApi,
-    amount: int,
+    target: Target,
     start: int,
     end: int,
-    tolerance: int = 0,
     max_blocks: int = DEFAULT_MAX_BLOCKS,
+    on_block: Callable[[int, int], None] | None = None,
 ) -> tuple[list[Match], int]:
-    """Matching outputs, and how many blocks were searched."""
+    """Matching outputs, closest first, and how many blocks were searched."""
     blocks = blocks_in_window(api, start, end, max_blocks)
     matches = []
-    for block in blocks:
-        raw = api.raw_block(block.hash)
-        for txid, vout, value, address in scan_block(raw, amount - tolerance, amount + tolerance):
-            matches.append(Match(txid, vout, value, address, block))
+    for done, block in enumerate(blocks):
+        if on_block is not None:
+            on_block(done, len(blocks))
+        price = api.btc_price(block.time) if target.usd is not None else None
+        centre = target.centre(price)
+        low, high = target.band(price)
+        for txid, vout, value, address in scan_block(api.raw_block(block.hash), low, high):
+            usd = value * price / SATS_PER_BTC if price else None
+            gap = abs(value - centre) / centre * 100
+            matches.append(Match(txid, vout, value, address, block, gap, usd, price))
+    matches.sort(key=lambda match: (match.gap_pct, match.block.height))
     return matches, len(blocks)

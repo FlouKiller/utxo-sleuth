@@ -181,13 +181,19 @@ def _hidden(node: FlowNode) -> int:
     return node.hidden + sum(_hidden(child) for child in node.children)
 
 
-def to_search_text(matches: list[Match], blocks: int) -> str:
+def to_search_text(matches: list[Match], blocks: int, limit: int = 50) -> str:
     lines = [f"Blocks searched: {blocks}", f"Matching outputs: {len(matches)}"]
-    for match in matches:
+    if len(matches) > limit:
+        lines.append(f"Showing the {limit} closest")
+    for match in matches[:limit]:
         moment = datetime.fromtimestamp(match.block.time).strftime("%Y-%m-%d %H:%M")
+        worth = ""
+        if match.usd is not None:
+            worth = f" = ${match.usd:,.2f} at ${match.price:,.0f}/BTC,"
         lines += [
             "",
-            f"{match.value:,} sats, block {match.block.height} at {moment} (local time)",
+            f"{match.value:,} sats,{worth} {match.gap_pct:.2f}% off, "
+            f"block {match.block.height} at {moment} (local time)",
             f"  to: {match.address or 'non-standard script'}",
             f"  tx: {match.txid}",
         ]

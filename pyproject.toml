@@ -15,12 +15,13 @@ dev = ["pytest>=8"]
 
 [project.scripts]
 utxo-sleuth = "utxo_sleuth.cli:main"
+utxo-sleuth-ui = "utxo_sleuth.ui.server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-utxo_sleuth = ["*.json"]
+utxo_sleuth = ["*.json", "ui/*.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

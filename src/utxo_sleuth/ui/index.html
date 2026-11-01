@@ -1,0 +1,700 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UTXO Sleuth</title>
+<style>
+:root {
+  --bg: #f4f2ee; --panel: #ffffff; --panel-2: #f8f6f2; --ink: #1d1b18; --muted: #6d675e;
+  --line: #e2ddd4; --accent: #c8690f; --accent-ink: #ffffff; --accent-soft: #fbead8;
+  --good: #1f7a53; --good-soft: #dff1e8; --warn: #a2650a; --warn-soft: #fbedd2;
+  --bad: #b3392f; --bad-soft: #f9e0dd; --violet: #6a4bbd; --violet-soft: #ebe5fa;
+  --blue: #2767ad; --blue-soft: #e0ecf9; --shadow: 0 1px 2px rgba(40,30,10,.06), 0 6px 20px rgba(40,30,10,.05);
+  --mono: ui-monospace, "Cascadia Code", Consolas, monospace;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #15130f; --panel: #1f1c17; --panel-2: #26221c; --ink: #f1ece3; --muted: #a59d90;
+  --line: #38322a; --accent: #f0932e; --accent-ink: #1d1407; --accent-soft: #3d2a14;
+  --good: #57c596; --good-soft: #17352a; --warn: #e5b45a; --warn-soft: #3b2d13;
+  --bad: #ee8378; --bad-soft: #3e1e1b; --violet: #b49df0; --violet-soft: #2c2445;
+  --blue: #7fb3ec; --blue-soft: #1b2e44; --shadow: 0 1px 2px rgba(0,0,0,.3), 0 6px 20px rgba(0,0,0,.2);
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.5 "Segoe UI", system-ui, -apple-system, sans-serif; }
+header { position: sticky; top: 0; z-index: 5; background: var(--panel); border-bottom: 1px solid var(--line); }
+.bar { max-width: 1240px; margin: 0 auto; padding: 0 20px; display: flex; align-items: center; gap: 24px; min-height: 60px; flex-wrap: wrap; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 17px; letter-spacing: -.01em; }
+.mark { width: 30px; height: 30px; border-radius: 9px; background: var(--accent); color: var(--accent-ink);
+  display: grid; place-items: center; font-weight: 800; }
+nav { display: flex; gap: 2px; flex: 1; flex-wrap: wrap; }
+nav button { background: none; border: 0; color: var(--muted); font: inherit; font-weight: 600; padding: 19px 13px 17px;
+  cursor: pointer; border-bottom: 3px solid transparent; }
+nav button:hover { color: var(--ink); }
+nav button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+.icon-btn { background: none; border: 1px solid var(--line); border-radius: 9px; color: var(--muted); padding: 6px 11px; cursor: pointer; font: inherit; }
+main { max-width: 1240px; margin: 0 auto; padding: 24px 20px 70px; }
+section[hidden] { display: none; }
+h1 { font-size: 23px; letter-spacing: -.02em; margin: 0 0 3px; }
+h2 { font-size: 15px; margin: 0 0 12px; }
+.lede { color: var(--muted); margin: 0 0 18px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px; box-shadow: var(--shadow); }
+.stack { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.row { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; }
+label { display: grid; gap: 4px; font-size: 13px; font-weight: 600; color: var(--muted); flex: 1 1 150px; min-width: 0; }
+label.wide { flex: 3 1 340px; }
+input, select { font: inherit; color: var(--ink); background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: 9px; padding: 9px 11px; width: 100%; min-width: 0; }
+input:focus-visible, button:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+input.address { font-family: var(--mono); font-size: 14px; }
+.primary { background: var(--accent); color: var(--accent-ink); border: 0; border-radius: 9px; padding: 10px 20px; font: inherit; font-weight: 700; cursor: pointer; white-space: nowrap; }
+.primary:hover { filter: brightness(1.06); }
+.primary[disabled] { opacity: .5; cursor: default; }
+.ghost { background: var(--panel-2); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 6px 11px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.ghost:hover { border-color: var(--accent); }
+details { margin-top: 13px; }
+summary { cursor: pointer; color: var(--muted); font-weight: 600; font-size: 13px; }
+details .row { margin-top: 12px; }
+.help { font-size: 12.5px; color: var(--muted); font-weight: 400; }
+.segmented { display: inline-flex; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+.segmented button { border: 0; background: var(--panel-2); color: var(--muted); font: inherit; font-weight: 600; padding: 9px 15px; cursor: pointer; }
+.segmented button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+.notice { border-radius: 10px; padding: 11px 13px; font-size: 14px; background: var(--warn-soft); color: var(--warn); }
+.notice.error { background: var(--bad-soft); color: var(--bad); }
+.notice.info { background: var(--blue-soft); color: var(--blue); }
+.progress { display: flex; align-items: center; gap: 12px; font-size: 14px; color: var(--muted); }
+.meter { flex: 1; height: 7px; background: var(--panel-2); border-radius: 9px; overflow: hidden; border: 1px solid var(--line); }
+.meter span { display: block; height: 100%; background: var(--accent); width: 30%; transition: width .3s; }
+.meter.busy span { animation: slide 1.3s ease-in-out infinite; }
+@keyframes slide { 0% { margin-left: -30%; } 100% { margin-left: 100%; } }
+@media (prefers-reduced-motion: reduce) { .meter.busy span { animation: none; width: 100%; opacity: .5; } }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 11px; }
+.stat { background: var(--panel-2); border-radius: 10px; padding: 10px 13px; }
+.stat b { display: block; font-size: 21px; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.stat span { font-size: 12.5px; color: var(--muted); }
+.chain { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.chip { display: inline-flex; align-items: center; gap: 5px; border-radius: 8px; padding: 4px 9px; background: var(--panel-2); border: 1px solid var(--line); font: 12.5px var(--mono); }
+.chip.service { background: var(--warn-soft); color: var(--warn); border-color: transparent; font-family: inherit; font-weight: 700; }
+.chip.target { background: var(--accent); color: var(--accent-ink); border-color: transparent; font-family: inherit; font-weight: 700; }
+.chip.multisig { background: var(--violet-soft); color: var(--violet); border-color: transparent; }
+.chain i { font-style: normal; color: var(--muted); }
+.graph-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--panel-2); max-height: 72vh; }
+svg text { font-family: "Segoe UI", system-ui, sans-serif; }
+.edge { fill: none; stroke: var(--muted); opacity: .4; }
+.node { cursor: pointer; }
+.node rect { fill: var(--panel); stroke: var(--line); stroke-width: 1.3; }
+.node:hover rect, .node.selected rect { stroke: var(--accent); stroke-width: 2; }
+.node .title { fill: var(--ink); font: 600 12.5px var(--mono); }
+.node .sub { fill: var(--muted); font-size: 11.5px; }
+.node.service rect { fill: var(--warn-soft); stroke: var(--warn); }
+.node.service .title { fill: var(--warn); font-family: "Segoe UI", system-ui, sans-serif; font-size: 13.5px; }
+.node.multisig rect { fill: var(--violet-soft); stroke: var(--violet); }
+.node.back rect { fill: var(--accent-soft); stroke: var(--accent); stroke-dasharray: 4 3; }
+.node.target rect { fill: var(--accent); stroke: var(--accent); }
+.node.target .title, .node.target .sub { fill: var(--accent-ink); }
+.detail { display: grid; gap: 8px; }
+.detail code, td code { font: 13px var(--mono); word-break: break-all; }
+.actions { display: flex; flex-wrap: wrap; gap: 7px; }
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th { text-align: left; color: var(--muted); font-size: 12.5px; padding: 7px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+td { padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+.bar-score { width: 76px; height: 6px; border-radius: 6px; background: var(--panel-2); overflow: hidden; margin-top: 4px; }
+.bar-score span { display: block; height: 100%; background: var(--accent); }
+.tag { display: inline-block; font-size: 11.5px; font-weight: 700; padding: 1px 8px; border-radius: 20px; }
+.tag.core { background: var(--good-soft); color: var(--good); }
+.tag.prob { background: var(--blue-soft); color: var(--blue); }
+.reasons { margin: 5px 0 0; padding: 0; list-style: none; font-size: 13px; color: var(--muted); }
+.reasons .plus::before { content: "+ "; color: var(--good); font-weight: 800; }
+.reasons .minus::before { content: "− "; color: var(--bad); font-weight: 800; }
+a { color: var(--accent); }
+.spaced { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.mono-list { font: 13px var(--mono); margin: 8px 0 0; white-space: pre-wrap; }
+@media (max-width: 720px) { .bar { gap: 6px; padding: 8px 14px; justify-content: space-between; } nav { order: 3; flex: 1 0 100%; } nav button { padding: 7px 8px; font-size: 13.5px; } main { padding: 16px 14px 50px; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <div class="brand"><span class="mark">₿</span>UTXO Sleuth</div>
+    <nav role="tablist" aria-label="Fonctions">
+      <button role="tab" data-tab="flow" aria-selected="true">Suivre les fonds</button>
+      <button role="tab" data-tab="cluster" aria-selected="false">Regrouper les adresses</button>
+      <button role="tab" data-tab="search" aria-selected="false">Trouver une transaction</button>
+      <button role="tab" data-tab="settings" aria-selected="false">Réglages</button>
+    </nav>
+    <button class="icon-btn" id="theme" aria-label="Changer de thème">Thème</button>
+  </div>
+</header>
+<main>
+  <div id="labels-banner" class="notice" hidden style="margin-bottom:16px"></div>
+
+  <section id="tab-flow" class="stack">
+    <div>
+      <h1>Suivre les fonds</h1>
+      <p class="lede">D'où vient l'argent d'une adresse, et où il est parti, jusqu'à un exchange, un service ou une fin de piste.</p>
+    </div>
+    <form class="card" id="flow-form">
+      <div class="row">
+        <label class="wide">Adresse Bitcoin<input class="address" name="address" required spellcheck="false" placeholder="bc1q…"></label>
+        <button class="primary">Lancer le suivi</button>
+      </div>
+      <details><summary>Options avancées</summary>
+        <div class="row">
+          <label>Profondeur (étapes)<input type="number" name="flow_depth" value="6" min="1" max="30"></label>
+          <label>Branches suivies par étape<input type="number" name="flow_branches" value="3" min="1" max="20"></label>
+          <label>Nœuds maximum<input type="number" name="flow_nodes" value="150" min="1" max="2000"></label>
+          <label>Transactions max par adresse<input type="number" name="max_address_txs" value="500" min="1"></label>
+        </div>
+      </details>
+    </form>
+    <div id="flow-status"></div>
+    <div id="flow-result" class="stack"></div>
+  </section>
+
+  <section id="tab-cluster" class="stack" hidden>
+    <div>
+      <h1>Regrouper les adresses</h1>
+      <p class="lede">Les adresses qui appartiennent probablement à la même personne, avec un score et les raisons de chaque lien.</p>
+    </div>
+    <form class="card" id="cluster-form">
+      <div class="row">
+        <label class="wide">Adresse Bitcoin<input class="address" name="address" spellcheck="false" placeholder="bc1q…"></label>
+        <button class="primary">Lancer l'analyse</button>
+      </div>
+      <details><summary>Options avancées</summary>
+        <div class="row">
+          <label>Sauts maximum<input type="number" name="max_hops" value="3" min="1" max="20"></label>
+          <label>Confiance minimale<input type="number" name="min_confidence" value="0.3" min="0" max="1" step="0.05"></label>
+          <label>Seuil pour le reste<input type="number" name="change_threshold" value="0.7" min="0" max="1" step="0.05"></label>
+          <label>Adresses maximum<input type="number" name="max_addresses" value="200" min="1"></label>
+        </div>
+        <div class="row">
+          <label>Transactions max par adresse<input type="number" name="max_address_txs" value="500" min="1"></label>
+          <label>Entrées max par transaction<input type="number" name="max_inputs" value="100" min="1"></label>
+        </div>
+      </details>
+      <details><summary>Mesurer la précision sur un wallet connu</summary>
+        <div class="row">
+          <label class="wide">Chemin du fichier xpub<input name="xpub_file" spellcheck="false" placeholder="C:\Users\…\Desktop\wallet.xpub"></label>
+          <label class="wide">Ou liste d'adresses connues<input name="truth_file" spellcheck="false" placeholder="C:\Users\…\wallet.truth.txt"></label>
+        </div>
+        <p class="help">Le fichier reste sur ta machine et la clé n'est jamais affichée. Avec un xpub, l'adresse peut rester vide.</p>
+      </details>
+    </form>
+    <div id="cluster-status"></div>
+    <div id="cluster-result" class="stack"></div>
+  </section>
+
+  <section id="tab-search" class="stack" hidden>
+    <div>
+      <h1>Trouver une transaction</h1>
+      <p class="lede">À partir d'un montant et d'un créneau. En dollars, le montant est converti au prix de chaque bloc du créneau.</p>
+    </div>
+    <form class="card" id="search-form">
+      <div class="row">
+        <label>Unité
+          <span class="segmented" id="unit">
+            <button type="button" data-unit="usd" aria-pressed="true">USD</button>
+            <button type="button" data-unit="sats" aria-pressed="false">Sats</button>
+          </span>
+        </label>
+        <label>Montant reçu <span id="amount-unit">(USD)</span><input type="number" name="amount" required min="0" step="any" placeholder="200"></label>
+        <label>Marge ± %<input type="number" name="margin" value="2" min="0" max="50" step="0.1"></label>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <label>Début (heure locale)<input type="datetime-local" name="start" required></label>
+        <label>Fin (facultatif)<input type="datetime-local" name="end"></label>
+        <button class="primary">Chercher</button>
+      </div>
+      <p class="help" style="margin:10px 0 0">Vise large : l'heure de minage vient après l'envoi. Attention, les explorateurs affichent souvent la valeur en dollars au prix du jour, pas au prix de la transaction.</p>
+      <details><summary>Options avancées</summary>
+        <div class="row">
+          <label>Blocs maximum<input type="number" name="max_blocks" value="72" min="1" max="1000"></label>
+          <label>Résultats affichés<input type="number" name="max_results" value="50" min="1" max="1000"></label>
+        </div>
+      </details>
+    </form>
+    <div id="search-status"></div>
+    <div id="search-result" class="stack"></div>
+  </section>
+
+  <section id="tab-settings" class="stack" hidden>
+    <div>
+      <h1>Réglages</h1>
+      <p class="lede">Ils s'appliquent à toutes les analyses.</p>
+    </div>
+    <div class="card">
+      <h2>Listes d'exchanges</h2>
+      <p id="labels-state" class="help"></p>
+      <button class="ghost" id="update-labels">Mettre à jour les listes</button>
+      <div id="labels-status" style="margin-top:10px"></div>
+    </div>
+    <form class="card" id="settings-form">
+      <h2>Connexion</h2>
+      <div class="row">
+        <label class="wide">Adresse de l'API<input name="api" spellcheck="false" placeholder="https://mempool.space/api"></label>
+        <label>Requêtes maximum<input type="number" name="max_requests" value="2000" min="1"></label>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <label class="wide">Fichier d'étiquettes personnelles (JSON)<input name="tags_file" spellcheck="false" placeholder="C:\Users\…\services.local.json"></label>
+      </div>
+      <p class="help" style="margin-bottom:0">Les adresses analysées partent vers cette API. Pour éviter ça, renseigne ton propre serveur. Le prix historique vient toujours de mempool.space.</p>
+    </form>
+  </section>
+</main>
+
+<script>
+"use strict";
+const $ = (selector, root = document) => root.querySelector(selector);
+const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+const SVG = "http://www.w3.org/2000/svg";
+const EXPLORER = "https://mempool.space";
+
+function h(tag, attrs = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [key, value] of Object.entries(attrs)) {
+    if (key === "class") node.className = value;
+    else if (key.startsWith("on")) node.addEventListener(key.slice(2), value);
+    else if (value !== undefined && value !== null) node.setAttribute(key, value);
+  }
+  node.append(...children.flat().filter(c => c !== null && c !== undefined));
+  return node;
+}
+
+function s(tag, attrs = {}, ...children) {
+  const node = document.createElementNS(SVG, tag);
+  for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
+  node.append(...children);
+  return node;
+}
+
+const short = address => address ? `${address.slice(0, 8)}…${address.slice(-6)}` : "script inconnu";
+const sats = value => `${Math.round(value).toLocaleString("fr-FR")} sats`;
+const usd = value => value.toLocaleString("fr-FR", { style: "currency", currency: "USD" });
+const day = time => time ? new Date(time * 1000).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" }) : "non confirmée";
+const pct = value => value === null ? "n/a" : `${Math.round(value * 100)} %`;
+
+const PHRASES = [
+  [/^unspent$/, "non dépensé"],
+  [/^back to target$/, "retour sur la cible"],
+  [/^already shown$/, "déjà affiché"],
+  [/^depth limit$/, "limite de profondeur"],
+  [/^node limit$/, "limite de nœuds"],
+  [/^request limit$/, "limite de requêtes"],
+  [/^newly mined$/, "fraîchement miné"],
+  [/^CoinJoin, trail lost$/, "CoinJoin, piste perdue"],
+  [/^likely a service \(swept with (\d+) other inputs\)$/, "service probable (regroupé avec $1 autres entrées)"],
+  [/^likely a service \(pays (\d+) addresses\)$/, "service probable (paie $1 adresses)"],
+  [/^likely a service \((\d+) transactions\)$/, "service probable ($1 transactions)"],
+  [/^(\d+) transactions, likely a service$/, "$1 transactions, service probable"],
+  [/^(\d+) input addresses, likely a service$/, "$1 adresses en entrée, service probable"],
+  [/^looks like a CoinJoin$/, "ressemble à un CoinJoin"],
+  [/^tagged: (.+)$/, "étiquetée : $1"],
+  [/^(\d+-of-\d+) multisig, possibly shared$/, "multisig $1, peut-être partagé"],
+  [/^unknown service \(payout to (\d+) addresses\)$/, "service inconnu (paie $1 adresses)"],
+  [/^another output has a round amount$/, "l'autre sortie a un montant rond"],
+  [/^round amount, looks like a payment$/, "montant rond, ressemble à un paiement"],
+  [/^same script type as the inputs \((.+)\)$/, "même type d'adresse que les entrées ($1)"],
+  [/^different script type from the inputs$/, "type d'adresse différent des entrées"],
+  [/^would make an input unnecessary$/, "rendrait une entrée inutile"],
+  [/^address was already funded before this transaction$/, "adresse déjà financée avant cette transaction"],
+  [/^spent with the same wallet fingerprint$/, "dépensée avec la même empreinte de wallet"],
+  [/^spent with a different wallet fingerprint$/, "dépensée avec une autre empreinte de wallet"],
+  [/^later swept with (\d+) other inputs, looks like a service deposit$/, "regroupée ensuite avec $1 autres entrées, ressemble à un dépôt de service"],
+  [/^funds came back to the sender$/, "les fonds sont revenus à l'expéditeur"],
+  [/^spent from a (\d+-of-\d+) multisig, possibly shared$/, "dépensée depuis un multisig $1, peut-être partagé"],
+];
+const KINDS = { common_input: "entrées communes", consolidation: "consolidation", sweep: "sweep", change: "reste" };
+
+function fr(text) {
+  for (const [pattern, phrase] of PHRASES) {
+    if (pattern.test(text)) return text.replace(pattern, phrase);
+  }
+  return text;
+}
+
+function reason(text) {
+  const sign = text[0];
+  let body = text.slice(2);
+  const other = body.startsWith("other output: ");
+  if (other) body = body.slice("other output: ".length);
+  return h("li", { class: sign === "+" ? "plus" : "minus" }, (other ? "autre sortie : " : "") + fr(body));
+}
+
+const settings = () => Object.fromEntries(new FormData($("#settings-form")));
+
+function formParams(form) {
+  return { ...settings(), ...Object.fromEntries(new FormData(form)) };
+}
+
+function saveSettings() {
+  try { localStorage.setItem("settings", JSON.stringify(settings())); } catch {}
+}
+
+function loadSettings() {
+  try {
+    const saved = JSON.parse(localStorage.getItem("settings") || "{}");
+    for (const [key, value] of Object.entries(saved)) {
+      const field = $(`#settings-form [name="${key}"]`);
+      if (field) field.value = value;
+    }
+  } catch {}
+}
+
+async function post(url, body) {
+  const response = await fetch(url, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+  return response.json();
+}
+
+const running = {};
+
+async function runJob(name, kind, params, onDone) {
+  const status = $(`#${name}-status`);
+  const form = $(`#${name}-form`);
+  const button = form && $(".primary", form);
+  if (running[name]) post(`/api/jobs/${running[name]}/cancel`, {});
+  if (button) button.disabled = true;
+  const result = $(`#${name}-result`);
+  if (result) result.replaceChildren();
+  const meter = h("span");
+  const line = h("span", {}, "Démarrage…");
+  const meterBox = h("div", { class: "meter busy" }, meter);
+  const job = await post("/api/jobs", { kind, params });
+  running[name] = job.id;
+  const cancel = h("button", { class: "ghost", type: "button", onclick: () => post(`/api/jobs/${job.id}/cancel`, {}) }, "Annuler");
+  status.replaceChildren(h("div", { class: "card progress" }, line, meterBox, cancel));
+  const finish = () => { if (button) button.disabled = false; delete running[name]; };
+
+  const poll = async () => {
+    let view;
+    try {
+      view = await (await fetch(`/api/jobs/${job.id}`)).json();
+    } catch {
+      finish();
+      status.replaceChildren(h("div", { class: "notice error" }, "Le serveur local ne répond plus."));
+      return;
+    }
+    const progress = view.progress || {};
+    if (progress.total) {
+      meterBox.classList.remove("busy");
+      meter.style.width = `${Math.round((progress.done + 1) / progress.total * 100)}%`;
+      line.textContent = `Bloc ${progress.done + 1} sur ${progress.total}`;
+    } else if (progress.lines) {
+      line.textContent = progress.lines[progress.lines.length - 1];
+    } else {
+      line.textContent = `Analyse en cours, ${progress.requests || 0} requêtes`;
+    }
+    if (view.state === "running") { setTimeout(poll, 500); return; }
+    finish();
+    if (view.state === "done") { status.replaceChildren(); onDone(view.result); }
+    else if (view.state === "cancelled") status.replaceChildren(h("div", { class: "notice" }, "Analyse annulée."));
+    else status.replaceChildren(h("div", { class: "notice error" }, view.error || "Échec de l'analyse."));
+  };
+  poll();
+}
+
+function download(name, content, type) {
+  const link = h("a", { href: URL.createObjectURL(new Blob([content], { type })), download: name });
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
+function stat(value, label) {
+  return h("div", { class: "stat" }, h("b", {}, String(value)), h("span", {}, label));
+}
+
+function incomplete(reason) {
+  return reason ? h("div", { class: "notice" }, `Résultat incomplet : ${reason}`) : null;
+}
+
+function goTo(tab, address) {
+  selectTab(tab);
+  const form = $(`#${tab}-form`);
+  $('[name="address"]', form).value = address;
+  form.requestSubmit();
+}
+
+function addressActions(address, txid) {
+  return h("div", { class: "actions" },
+    address && h("button", { class: "ghost", type: "button", onclick: () => goTo("flow", address) }, "Suivre les fonds"),
+    address && h("button", { class: "ghost", type: "button", onclick: () => goTo("cluster", address) }, "Regrouper"),
+    address && h("button", { class: "ghost", type: "button", onclick: () => navigator.clipboard.writeText(address) }, "Copier"),
+    txid && h("a", { class: "ghost", href: `${EXPLORER}/tx/${txid}`, target: "_blank", rel: "noreferrer" }, "Voir la transaction"));
+}
+
+/* Funds flow */
+
+const NODE = { width: 196, height: 58, gapX: 74, gapY: 14 };
+
+function nodeTitle(node) { return node.service || short(node.address); }
+
+function nodeSub(node) {
+  if (node.service) return "service identifié";
+  if (node.end) { const text = fr(node.end); return text.length > 31 ? `${text.slice(0, 30)}…` : text; }
+  if (node.multisig) return `multisig ${node.multisig}`;
+  return sats(node.value);
+}
+
+function placeTree(nodes, side, depth, cursor, placed) {
+  const ys = [];
+  for (const node of nodes) {
+    let y;
+    if (node.children.length) {
+      const below = placeTree(node.children, side, depth + 1, cursor, placed);
+      y = (below[0] + below[below.length - 1]) / 2;
+    } else {
+      y = cursor.y;
+      cursor.y += NODE.height + NODE.gapY;
+    }
+    placed.push({ node, side, depth, y, parent: null });
+    ys.push(y);
+  }
+  return ys;
+}
+
+function drawFlow(report, onSelect) {
+  const left = { y: 20 }, right = { y: 20 };
+  const placed = [];
+  const leftRoots = placeTree(report.origins, -1, 1, left, placed);
+  const rightRoots = placeTree(report.destinations, 1, 1, right, placed);
+  const maxDepth = side => Math.max(0, ...placed.filter(p => p.side === side).map(p => p.depth));
+  const leftColumns = maxDepth(-1), rightColumns = maxDepth(1);
+  const step = NODE.width + NODE.gapX;
+  const originX = 24 + leftColumns * step;
+  const height = Math.max(left.y, right.y, NODE.height + 40) + 8;
+  const width = originX + (rightColumns + 1) * step - NODE.gapX + 24;
+  const centreY = (height - NODE.height) / 2;
+  const leftShift = centreY - (left.y - 20 - NODE.height - NODE.gapY) / 2 - 20;
+  const rightShift = centreY - (right.y - 20 - NODE.height - NODE.gapY) / 2 - 20;
+  const svg = s("svg", { width, height, viewBox: `0 0 ${width} ${height}`, role: "img", "aria-label": "Schéma des fonds" });
+  const edges = s("g"), boxes = s("g");
+  svg.append(edges, boxes);
+  const position = new Map();
+  for (const item of placed) {
+    const shift = item.side < 0 ? leftShift : rightShift;
+    position.set(item.node, { x: originX + item.side * item.depth * step, y: item.y + shift, side: item.side });
+  }
+  const link = (from, to, value) => {
+    const fromX = from.x + (to.x > from.x ? NODE.width : 0), toX = to.x + (to.x > from.x ? 0 : NODE.width);
+    const fromY = from.y + NODE.height / 2, toY = to.y + NODE.height / 2;
+    const middle = (fromX + toX) / 2;
+    edges.append(s("path", {
+      class: "edge", d: `M${fromX} ${fromY} C${middle} ${fromY} ${middle} ${toY} ${toX} ${toY}`,
+      "stroke-width": Math.max(1.2, Math.min(7, Math.log10(value + 10) - 1.5)),
+    }));
+  };
+  const walk = (nodes, parent) => {
+    for (const node of nodes) { const at = position.get(node); link(parent, at, node.value); walk(node.children, at); }
+  };
+  const centre = { x: originX, y: centreY };
+  walk(report.origins, centre);
+  walk(report.destinations, centre);
+  const drawBox = (x, y, classes, title, sub, onClick) => {
+    const group = s("g", { class: `node ${classes}`, transform: `translate(${x} ${y})`, tabindex: "0", role: "button" });
+    group.append(
+      s("rect", { width: NODE.width, height: NODE.height, rx: 11 }),
+      Object.assign(s("text", { class: "title", x: 13, y: 24 }), { textContent: title }),
+      Object.assign(s("text", { class: "sub", x: 13, y: 43 }), { textContent: sub }));
+    group.addEventListener("click", () => { $$(".node.selected", svg).forEach(n => n.classList.remove("selected")); group.classList.add("selected"); onClick(); });
+    group.addEventListener("keydown", event => { if (event.key === "Enter") group.dispatchEvent(new MouseEvent("click")); });
+    boxes.append(group);
+  };
+  drawBox(centre.x, centre.y, "target", short(report.target), "adresse ciblée", () => onSelect(null));
+  for (const [node, at] of position) {
+    const classes = [node.service && "service", node.multisig && "multisig", node.end === "back to target" && "back"].filter(Boolean).join(" ");
+    drawBox(at.x, at.y, classes, nodeTitle(node), nodeSub(node), () => onSelect(node));
+  }
+  return svg;
+}
+
+function mainPath(nodes) {
+  if (!nodes.length) return [];
+  const best = nodes.reduce((a, b) => (b.value > a.value ? b : a));
+  return [best, ...mainPath(best.children)];
+}
+
+function chipFor(node) {
+  const classes = ["chip", node.service && "service", node.multisig && "multisig"].filter(Boolean).join(" ");
+  return h("span", { class: classes, title: node.address || "" }, nodeTitle(node) + (node.end ? ` (${fr(node.end)})` : ""));
+}
+
+function countNodes(nodes) { return nodes.reduce((total, node) => total + 1 + countNodes(node.children), 0); }
+
+function collectServices(nodes, found = new Set()) {
+  for (const node of nodes) { if (node.service) found.add(node.service); collectServices(node.children, found); }
+  return found;
+}
+
+function renderFlow(report) {
+  const panel = $("#flow-result");
+  const chain = [...mainPath(report.origins).reverse().map(chipFor), h("span", { class: "chip target" }, "Cible"), ...mainPath(report.destinations).map(chipFor)];
+  const links = chain.flatMap((chip, index) => index ? [h("i", {}, "→"), chip] : [chip]);
+  const detail = h("div", { class: "detail" }, h("p", { class: "help", style: "margin:0" }, "Clique sur une case pour voir son détail."));
+  const select = node => {
+    if (!node) { detail.replaceChildren(h("code", {}, report.target), addressActions(report.target)); return; }
+    detail.replaceChildren(
+      h("div", {}, h("strong", {}, node.service || "Adresse"), ` · ${sats(node.value)} · ${day(node.time)}`),
+      node.address ? h("code", {}, node.address) : null,
+      node.end ? h("div", { class: "help" }, `Fin de piste : ${fr(node.end)}`) : null,
+      addressActions(node.address, node.txid));
+  };
+  const services = [...collectServices([...report.origins, ...report.destinations])];
+  panel.replaceChildren(...[
+    incomplete(report.truncated),
+    h("div", { class: "stats" },
+      stat(report.origins.length, "branches entrantes"),
+      stat(report.destinations.length, "branches sortantes"),
+      stat(countNodes([...report.origins, ...report.destinations]), "étapes suivies"),
+      stat(services.join(", ") || "aucun", "services nommés")),
+    h("div", { class: "card" }, h("h2", {}, "Flux principal, en suivant les plus gros montants"), h("div", { class: "chain" }, links)),
+    h("div", { class: "card" },
+      h("div", { class: "spaced" }, h("h2", {}, "Schéma"),
+        h("button", { class: "ghost", type: "button", onclick: () => download("flux.report.json", JSON.stringify(report, null, 2), "application/json") }, "Exporter en JSON")),
+      h("div", { class: "graph-wrap" }, drawFlow(report, select)),
+      h("div", { style: "margin-top:13px" }, detail)),
+  ].filter(Boolean));
+  const wrap = $(".graph-wrap", panel), target = $(".node.target", panel);
+  wrap.scrollLeft = target.getBoundingClientRect().left - wrap.getBoundingClientRect().left - wrap.clientWidth / 2 + NODE.width / 2;
+}
+
+/* Clustering */
+
+function renderCluster(report) {
+  const members = Object.values(report.members).sort((a, b) => b.confidence - a.confidence || a.hops - b.hops);
+  const core = members.filter(m => m.core).length;
+  const rows = members.map(member => h("tr", {},
+    h("td", { class: "num" }, member.confidence.toFixed(2),
+      h("div", { class: "bar-score" }, h("span", { style: `width:${member.confidence * 100}%` }))),
+    h("td", {}, h("span", { class: `tag ${member.core ? "core" : "prob"}` }, member.core ? "core" : "probable")),
+    h("td", { class: "num" }, member.hops),
+    h("td", {}, h("code", {}, member.address),
+      member.via ? h("div", { class: "help" }, `via ${KINDS[member.via.kind] || member.via.kind}`) : null,
+      member.via && member.via.reasons.length ? h("ul", { class: "reasons" }, member.via.reasons.map(reason)) : null),
+    h("td", {}, addressActions(member.address, member.via && member.via.txid))));
+  const services = report.services.map(item => h("tr", {},
+    h("td", {}, h("code", {}, short(item.address))),
+    h("td", {}, item.direction === "received_from" ? "a reçu de" : "a envoyé à"),
+    h("td", {}, h("strong", {}, fr(item.service))),
+    h("td", {}, h("a", { href: `${EXPLORER}/tx/${item.txid}`, target: "_blank", rel: "noreferrer" }, item.txid.slice(0, 12)))));
+  const list = (title, entries) => entries.length
+    ? h("div", { class: "card" }, h("h2", {}, title), h("div", { class: "mono-list" }, entries.map(([key, why]) => `${short(key)}  ${fr(why)}\n`)))
+    : null;
+  const evaluation = report.evaluation;
+  panel: {
+    $("#cluster-result").replaceChildren(...[
+      incomplete(report.truncated),
+      h("div", { class: "stats" },
+        stat(members.length, "adresses"), stat(core, "core"), stat(members.length - core, "probables"),
+        stat(report.services.length, "contacts avec un service"), stat(report.requests, "requêtes")),
+      evaluation ? h("div", { class: "card" }, h("h2", {}, "Précision sur le wallet connu"),
+        h("div", { class: "stats" },
+          stat(pct(evaluation.all.precision), `tout (${evaluation.all.found}/${evaluation.all.predicted})`),
+          stat(pct(evaluation.core.precision), `core (${evaluation.core.found}/${evaluation.core.predicted})`),
+          evaluation.all.recall !== null ? stat(pct(evaluation.all.recall), `rappel (${evaluation.all.found}/${evaluation.all.expected})`) : null,
+          Object.entries(evaluation.kinds).map(([kind, score]) => stat(`${score.found}/${score.predicted}`, KINDS[kind] || kind)))) : null,
+      h("div", { class: "card" },
+        h("div", { class: "spaced" }, h("h2", {}, "Adresses reliées"),
+          h("div", { class: "actions" },
+            h("button", { class: "ghost", type: "button", onclick: () => download("cluster.report.json", JSON.stringify(report, null, 2), "application/json") }, "Exporter en JSON"),
+            h("button", { class: "ghost", type: "button", onclick: () => download("cluster.dot", report.dot, "text/plain") }, "Exporter en DOT"))),
+        h("div", { class: "table-wrap" }, h("table", {},
+          h("thead", {}, h("tr", {}, ["Score", "Niveau", "Sauts", "Adresse", ""].map(t => h("th", {}, t)))),
+          h("tbody", {}, rows)))),
+      services.length ? h("div", { class: "card" }, h("h2", {}, "Exchanges et services"),
+        h("div", { class: "table-wrap" }, h("table", {}, h("tbody", {}, services)))) : null,
+      list("Arrêts de l'exploration", Object.entries(report.boundaries)),
+      list("Transactions ignorées", Object.entries(report.skipped_txs)),
+      report.unexpanded ? h("div", { class: "notice info" }, `${report.unexpanded} adresses non explorées à cause de la limite de sauts.`) : null,
+    ].filter(Boolean));
+  }
+}
+
+/* Search */
+
+let unit = "usd";
+
+function setUnit(next) {
+  unit = next;
+  $$("#unit button").forEach(button => button.setAttribute("aria-pressed", String(button.dataset.unit === next)));
+  $("#amount-unit").textContent = next === "usd" ? "(USD)" : "(sats)";
+  const form = $("#search-form");
+  form.elements.margin.value = next === "usd" ? 2 : 0;
+  form.elements.amount.step = next === "usd" ? "any" : "1";
+  form.elements.amount.placeholder = next === "usd" ? "200" : "517412";
+}
+
+function renderSearch(result) {
+  const isUsd = result.unit === "usd";
+  const rows = result.matches.map(match => h("tr", {},
+    h("td", { class: "num" }, day(match.block.time), h("div", { class: "help" }, `bloc ${match.block.height}`)),
+    h("td", { class: "num" }, sats(match.value),
+      isUsd ? h("div", { class: "help" }, `${usd(match.usd)} à ${usd(match.price)}/BTC`) : null),
+    h("td", { class: "num" }, `${match.gap_pct.toFixed(2)} %`),
+    h("td", {}, match.address ? h("code", {}, match.address) : "script non standard"),
+    h("td", {}, addressActions(match.address, match.txid))));
+  $("#search-result").replaceChildren(...[
+    h("div", { class: "stats" },
+      stat(result.total, "sorties trouvées"), stat(result.blocks, "blocs parcourus"), stat(result.requests, "requêtes")),
+    result.total > result.matches.length ? h("div", { class: "notice info" }, `Seules les ${result.matches.length} plus proches sont affichées.`) : null,
+    result.matches.length
+      ? h("div", { class: "card" }, h("h2", {}, "Résultats, du plus proche au plus éloigné"),
+          h("div", { class: "table-wrap" }, h("table", {},
+            h("thead", {}, h("tr", {}, ["Date", "Montant", "Écart", "Adresse", ""].map(t => h("th", {}, t)))),
+            h("tbody", {}, rows))))
+      : h("div", { class: "notice" }, "Aucune sortie dans ce créneau. Essaie un créneau plus large ou une marge plus grande."),
+  ].filter(Boolean));
+}
+
+/* Page */
+
+function selectTab(name) {
+  $$("nav button").forEach(button => button.setAttribute("aria-selected", String(button.dataset.tab === name)));
+  $$("main > section").forEach(section => { section.hidden = section.id !== `tab-${name}`; });
+}
+
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  try { localStorage.setItem("theme", theme); } catch {}
+}
+
+async function refreshStatus() {
+  const { labels } = await (await fetch("/api/status")).json();
+  const banner = $("#labels-banner");
+  banner.hidden = labels.downloaded;
+  if (!labels.downloaded) banner.textContent = "Les listes d'exchanges ne sont pas téléchargées : va dans Réglages pour les récupérer.";
+  $("#labels-state").textContent = labels.downloaded
+    ? `Installées, ${(labels.size / 1e6).toFixed(0)} Mo, mises à jour le ${day(labels.updated)}. Environ 15 minutes pour tout retélécharger.`
+    : "Non téléchargées : environ 1 Go et 15 minutes.";
+}
+
+$$("nav button").forEach(button => button.addEventListener("click", () => selectTab(button.dataset.tab)));
+$("#theme").addEventListener("click", () => applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"));
+$$("#unit button").forEach(button => button.addEventListener("click", () => setUnit(button.dataset.unit)));
+$("#settings-form").addEventListener("input", saveSettings);
+$("#settings-form").addEventListener("submit", event => event.preventDefault());
+$("#flow-form").addEventListener("submit", event => { event.preventDefault(); runJob("flow", "flow", formParams(event.target), renderFlow); });
+$("#cluster-form").addEventListener("submit", event => { event.preventDefault(); runJob("cluster", "cluster", formParams(event.target), renderCluster); });
+$("#search-form").addEventListener("submit", event => {
+  event.preventDefault();
+  runJob("search", "search", { ...formParams(event.target), unit }, renderSearch);
+});
+$("#update-labels").addEventListener("click", () => runJob("labels", "labels", {}, () => {
+  $("#labels-status").replaceChildren(h("div", { class: "notice info" }, "Listes mises à jour."));
+  refreshStatus();
+}));
+
+let storedTheme = null;
+try { storedTheme = localStorage.getItem("theme"); } catch {}
+applyTheme(storedTheme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
+loadSettings();
+refreshStatus();
+</script>
+</body>
+</html>
